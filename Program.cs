@@ -10,7 +10,7 @@ using RenoApi.Data;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDbContext<AppDb>(o =>
-    o.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
+    o.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 builder.Services.AddScoped<TokenService>();
 
 builder.Services.AddControllers().AddJsonOptions(o =>
