@@ -1,0 +1,4 @@
+bin/
+obj/
+reno.db*
+wwwroot/photos/
