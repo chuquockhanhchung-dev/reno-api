@@ -77,7 +77,7 @@ public class SessionsController(AppDb db, IWebHostEnvironment env) : ControllerB
         var s = await db.WorkSessions.FindAsync(id);
         if (s == null) return NotFound();
         if (s.UserId != Uid) return Forbid();
-        s.CheckIn ??= DateTime.Now;
+        s.CheckIn ??= DateTime.UtcNow;
         await db.SaveChangesAsync();
         return NoContent();
     }
@@ -89,7 +89,7 @@ public class SessionsController(AppDb db, IWebHostEnvironment env) : ControllerB
         if (s == null) return NotFound();
         if (s.UserId != Uid) return Forbid();
         if (s.CheckIn == null) return BadRequest(new { message = "Chưa chấm công vào ca" });
-        s.CheckOut ??= DateTime.Now;
+        s.CheckOut ??= DateTime.UtcNow;
         await db.SaveChangesAsync();
         return NoContent();
     }
@@ -106,7 +106,7 @@ public class SessionsController(AppDb db, IWebHostEnvironment env) : ControllerB
                 message = "Việc này bắt buộc chụp ảnh minh chứng trước khi tích" });
 
         st!.Done = req.Done;
-        st.DoneAt = req.Done ? DateTime.Now : null;
+        st.DoneAt = req.Done ? DateTime.UtcNow : null;
         if (!req.Done) { DeletePhoto(st); st.Review = null; st.ReviewNote = null; }
         await db.SaveChangesAsync();
         return NoContent();
