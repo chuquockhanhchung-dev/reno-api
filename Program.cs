@@ -1,6 +1,8 @@
 using System.Text;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -15,9 +17,22 @@ builder.Services.AddScoped<TokenService>();
 
 builder.Services.AddControllers().AddJsonOptions(o =>
 {
-    // Enum trả về dạng chữ camelCase: "barista", "opening", "pass"... khớp enum name bên Flutter
     o.JsonSerializerOptions.Converters.Add(
         new JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase));
+});
+
+// ---------- CHỐNG DÒ MẬT KHẨU: 5 lần đăng nhập / phút / IP ----------
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = 429;
+    o.AddPolicy("login", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        factory: _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 5,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+        }));
 });
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -33,8 +48,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 builder.Services.AddAuthorization();
 
+// ---------- CORS: CHỈ cho phép web của mình gọi ----------
+var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>()
+              ?? ["http://localhost:5088"];
 builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
-    p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+    p.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod()));
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(o =>
@@ -43,8 +61,10 @@ builder.Services.AddSwaggerGen(o =>
     o.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Description = "Dán token dạng: Bearer {token}",
-        Name = "Authorization", In = ParameterLocation.Header,
-        Type = SecuritySchemeType.ApiKey, Scheme = "Bearer",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer",
     });
     o.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
@@ -55,7 +75,6 @@ builder.Services.AddSwaggerGen(o =>
 
 var app = builder.Build();
 
-// Tạo DB + seed dữ liệu lần đầu (không cần lệnh migration nào cả)
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDb>();
@@ -63,14 +82,15 @@ using (var scope = app.Services.CreateScope())
     Seeder.Run(db);
 }
 
-// Thư mục ảnh minh chứng
-var photoDir = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "photos");
-Directory.CreateDirectory(photoDir);
+Directory.CreateDirectory(
+    Path.Combine(app.Environment.ContentRootPath, "wwwroot", "photos"));
 
 app.UseSwagger();
 app.UseSwaggerUI();
 app.UseCors();
-app.UseStaticFiles();          // phục vụ /photos/xxx.jpg
+app.UseRateLimiter();
+// ⚠️ KHÔNG dùng UseStaticFiles cho photos nữa —
+// ảnh chỉ xem được qua API có kiểm tra quyền.
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();

@@ -8,7 +8,7 @@ public record UserDto(int Id, string Username, string FullName, StaffRole Role, 
 public record LoginRes(string AccessToken, UserDto User);
 public record CreateUserReq(string Username, string Password, string FullName, StaffRole Role);
 public record UpdateUserReq(string? FullName, StaffRole? Role, bool? IsActive, string? Password);
-
+public record ChangePasswordReq(string OldPassword, string NewPassword);
 // ---------- Checklist ----------
 public record TaskTemplateDto(int Id, StaffRole Role, TaskPhase Phase, string Title,
     string Standard, int Minutes, TaskPriority Priority, bool RequiresPhoto, int SortOrder);

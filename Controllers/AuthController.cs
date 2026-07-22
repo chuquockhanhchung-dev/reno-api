@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RenoApi.Auth;
 using RenoApi.Data;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace RenoApi.Controllers;
 
@@ -10,6 +11,7 @@ namespace RenoApi.Controllers;
 public class AuthController(AppDb db, TokenService tokens) : ControllerBase
 {
     [HttpPost("login")]
+    [EnableRateLimiting("login")]   
     public async Task<ActionResult<LoginRes>> Login(LoginReq req)
     {
         var user = await db.Users.FirstOrDefaultAsync(

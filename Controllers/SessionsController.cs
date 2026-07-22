@@ -22,7 +22,6 @@ public class SessionsController(AppDb db, IWebHostEnvironment env) : ControllerB
             .Select(t => new TaskStateDto(t.TaskTemplateId, t.Done, t.DoneAt,
                 t.PhotoPath, t.Review, t.ReviewNote)).ToList());
 
-    /// Lấy-hoặc-tạo ca làm của CHÍNH MÌNH trong 1 ngày/ca (kèm checklist theo vị trí)
     [HttpPost("open")]
     public async Task<ActionResult<SessionDto>> Open(OpenSessionReq req)
     {
@@ -40,7 +39,9 @@ public class SessionsController(AppDb db, IWebHostEnvironment env) : ControllerB
 
         s = new WorkSession
         {
-            UserId = Uid, Date = date, Shift = req.Shift,
+            UserId = Uid,
+            Date = date,
+            Shift = req.Shift,
             States = templates.Select(t => new TaskState { TaskTemplateId = t.Id }).ToList(),
         };
         db.WorkSessions.Add(s);
@@ -48,7 +49,6 @@ public class SessionsController(AppDb db, IWebHostEnvironment env) : ControllerB
         return ToDto(await Query().FirstAsync(x => x.Id == s.Id));
     }
 
-    /// Danh sách ca — CHT xem tất cả, nhân viên chỉ ca của mình
     [HttpGet]
     public async Task<List<SessionDto>> List([FromQuery] string? from, [FromQuery] string? to)
     {
@@ -57,7 +57,6 @@ public class SessionsController(AppDb db, IWebHostEnvironment env) : ControllerB
         if (from != null) { var f = DateOnly.Parse(from); q = q.Where(s => s.Date >= f); }
         if (to != null) { var t = DateOnly.Parse(to); q = q.Where(s => s.Date <= t); }
         var list = await q.OrderByDescending(s => s.Date).ToListAsync();
-        // chỉ trả ca có hoạt động (đã chấm công hoặc đã tích việc)
         return list.Where(s => s.CheckIn != null || s.States.Any(t => t.Done))
             .Select(ToDto).ToList();
     }
@@ -94,7 +93,6 @@ public class SessionsController(AppDb db, IWebHostEnvironment env) : ControllerB
         return NoContent();
     }
 
-    /// Tick / bỏ tick 1 việc. Việc yêu cầu ảnh phải upload ảnh TRƯỚC rồi mới tick.
     [HttpPut("{id:int}/tasks/{templateId:int}")]
     public async Task<IActionResult> Toggle(int id, int templateId, ToggleTaskReq req)
     {
@@ -102,8 +100,11 @@ public class SessionsController(AppDb db, IWebHostEnvironment env) : ControllerB
         if (err != null) return err;
 
         if (req.Done && st!.Template.RequiresPhoto && st.PhotoPath == null)
-            return BadRequest(new { code = "PHOTO_REQUIRED",
-                message = "Việc này bắt buộc chụp ảnh minh chứng trước khi tích" });
+            return BadRequest(new
+            {
+                code = "PHOTO_REQUIRED",
+                message = "Việc này bắt buộc chụp ảnh minh chứng trước khi tích"
+            });
 
         st!.Done = req.Done;
         st.DoneAt = req.Done ? DateTime.UtcNow : null;
@@ -112,17 +113,19 @@ public class SessionsController(AppDb db, IWebHostEnvironment env) : ControllerB
         return NoContent();
     }
 
-    /// Upload ảnh minh chứng (multipart/form-data, field "file")
+    /// Upload ảnh minh chứng. Tên file NGẪU NHIÊN để không ai đoán được đường dẫn.
     [HttpPost("{id:int}/tasks/{templateId:int}/photo")]
     [RequestSizeLimit(10 * 1024 * 1024)]
-    public async Task<ActionResult<object>> Photo(int id, int templateId, IFormFile file)
+    public async Task<ActionResult<object>> UploadPhoto(int id, int templateId, IFormFile file)
     {
         var (err, st) = await GetOwnState(id, templateId);
         if (err != null) return err;
         if (file.Length == 0) return BadRequest(new { message = "File rỗng" });
+        if (!file.ContentType.StartsWith("image/"))
+            return BadRequest(new { message = "Chỉ nhận file ảnh" });
 
         DeletePhoto(st!);
-        var name = $"{id}_{templateId}_{DateTime.Now:yyyyMMddHHmmss}.jpg";
+        var name = $"{Guid.NewGuid():N}.jpg";
         var path = Path.Combine(env.ContentRootPath, "wwwroot", "photos", name);
         await using (var fs = System.IO.File.Create(path))
             await file.CopyToAsync(fs);
@@ -131,7 +134,21 @@ public class SessionsController(AppDb db, IWebHostEnvironment env) : ControllerB
         return new { photoPath = st.PhotoPath };
     }
 
-    /// Cửa hàng trưởng duyệt 1 việc: Đạt / Không đạt (+ ghi chú). review = null để bỏ đánh giá.
+    /// Xem ảnh minh chứng — BẮT BUỘC đăng nhập, chỉ chủ ca hoặc cửa hàng trưởng.
+    [HttpGet("{id:int}/tasks/{templateId:int}/photo")]
+    public async Task<IActionResult> GetPhoto(int id, int templateId)
+    {
+        var st = await db.TaskStates.Include(t => t.Session)
+            .FirstOrDefaultAsync(t => t.WorkSessionId == id && t.TaskTemplateId == templateId);
+        if (st?.PhotoPath == null) return NotFound();
+        if (!IsManager && st.Session.UserId != Uid) return Forbid();
+
+        var path = Path.Combine(env.ContentRootPath, "wwwroot",
+            st.PhotoPath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+        if (!System.IO.File.Exists(path)) return NotFound();
+        return PhysicalFile(path, "image/jpeg");
+    }
+
     [HttpPut("{id:int}/tasks/{templateId:int}/review")]
     [Authorize(Roles = "Manager")]
     public async Task<IActionResult> ReviewTask(int id, int templateId, ReviewTaskReq req)
@@ -145,7 +162,6 @@ public class SessionsController(AppDb db, IWebHostEnvironment env) : ControllerB
         return NoContent();
     }
 
-    /// Nhận xét chung cuối ca của cửa hàng trưởng
     [HttpPut("{id:int}/manager-note")]
     [Authorize(Roles = "Manager")]
     public async Task<IActionResult> ManagerNote(int id, ManagerNoteReq req)
@@ -173,11 +189,17 @@ public class SessionsController(AppDb db, IWebHostEnvironment env) : ControllerB
         if (st == null) return (NotFound(), null);
         if (st.Session.UserId != Uid) return (Forbid(), null);
         if (st.Session.CheckIn == null)
-            return (BadRequest(new { code = "NOT_CHECKED_IN",
-                message = "Chưa chấm công vào ca" }), null);
+            return (BadRequest(new
+            {
+                code = "NOT_CHECKED_IN",
+                message = "Chưa chấm công vào ca"
+            }), null);
         if (st.Session.CheckOut != null)
-            return (BadRequest(new { code = "SESSION_CLOSED",
-                message = "Ca đã kết, checklist đã khóa" }), null);
+            return (BadRequest(new
+            {
+                code = "SESSION_CLOSED",
+                message = "Ca đã kết, checklist đã khóa"
+            }), null);
         return (null, st);
     }
 
